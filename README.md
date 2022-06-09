@@ -1,11 +1,16 @@
 ## What is this thing?
 
-This is small pile of code, using FPDF that will generate 11x17 PDFs for the stage signs we use at Hubba. It is a pain in the ass to type in 30 people's names into Illustrator or Indesign and create PDFs by hand. With a fair amount of math, this does that automatically.
+This is small pile of code, using FPDF that will generate 11x17 PDFs for 
+the stage signs we use at Hubba. It is a pain in the ass to type in 30 
+people's names into Illustrator or Indesign and create PDFs by hand. 
+With a fair amount of math, this does that automatically.
 
 Features
 
 - Given any font, maximize the person's name on the sheet in Landscape mode
-- Takes one or more names
+- Deals with multiple-word stage names well
+- Centers it all on the stage
+- Takes one or more names in names.txt and cranks out as many PDFs as you want.
 - Extensive debugging for margins and such
 - No BS page generator
 
