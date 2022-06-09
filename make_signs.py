@@ -21,13 +21,11 @@ LEADING = 5  # mm - extra spacing between lines
 DEBUG = False  # set to True to see lines and bounding boxes
 
 # when trying to find the next font size that fits, what do we step by?
-FONT_STEP = 1
+FONT_STEP = 10
 
 # since most of these are names, a good starting point is about 50pt
-FONT_MIN = 50
-FONT_MAX = 400
-
-
+FONT_MIN = 100
+FONT_MAX = 800
 class PDF(FPDF):
     '''
     uses the FPDF class to make Hubba hubba stage signs
@@ -189,9 +187,10 @@ class PDF(FPDF):
                     f'LIMIT: font width {text_width} mm maxed out at {max_width}')
                 break
 
-            if text_height > (self.h-self.t_margin-self.b_margin):
+            # for some reason this doens't work well and the bottom margin is always wrong.
+            if text_height > (self.h - self.t_margin - self.t_margin):
                 print(
-                    f'LIMIT:  overall text height {text_height} exceeds {self.h-self.t_margin-self.b_margin}mm')
+                    f'LIMIT:  overall text height {text_height} exceeds {self.h - self.t_margin - self.t_margin}mm')
                 break
 
             if font_size >= font_max:
@@ -235,13 +234,22 @@ class PDF(FPDF):
         if DEBUG:
             self.make_labelled_line(self.t_margin, 255, 0, 0, 'MARGIN')
 
-        # Phew, draw our text!
-        self.set_xy(0, 0)
+        # there's a little fudge factor here because the text is a little oddly shaped
+        # we probably shouldn't subtract t-margin.
+        y_offset = ((self.h - self.t_margin) / 2) - (metrics['text_height'] / 2)
+
+        if DEBUG:
+            print(f'y_offset: {y_offset}')  
+            self.make_labelled_line(y_offset, 0, 255, 0, 'YOFFSET')
+
+        self.set_xy(0, y_offset)
         self.set_fill_color(0, 0, 0)
         self.set_text_color(0, 0, 0)
         self.set_font(self.MYFONT, '', metrics['font_size'])
 
+        # Finally, draw our text!
         if DEBUG:
+            self.set_draw_color(255, 0, 255)
             self.multi_cell(w=self.w,
                             h=metrics['font_height']+LEADING,
                             align='C',
@@ -272,6 +280,7 @@ def main():
 
         # draw the margins if we can
         if DEBUG:
+            print('\n')
             print(f'page WIDTH: {pdf.w} page height: {pdf.h}')
             print(f'marginL: {pdf.l_margin} marginR: {pdf.r_margin}')
             print(f'marginT: {pdf.t_margin} marginB: {pdf.b_margin}')
@@ -280,8 +289,11 @@ def main():
             pdf.set_draw_color(255, 255, 0)
             pdf.rect(0, 0, pdf.w, pdf.h, 'D')
             pdf.set_draw_color(255, 0, 0)
+
+            # note that we are going to use t_margin twice, because b_margin is
+            # always zero when autopagebreak is off
             pdf.rect(pdf.l_margin, pdf.t_margin, pdf.w-pdf.r_margin -
-                     pdf.l_margin, pdf.h-pdf.b_margin-pdf.t_margin, 'D')
+                     pdf.l_margin, pdf.h - pdf.t_margin - pdf.t_margin, 'D')
 
         print(f'\n{line.strip()}\n')
 
@@ -290,6 +302,5 @@ def main():
 
         outputfn = 'out/' + line.strip().replace(' ', '_') + '.pdf'
         pdf.output(outputfn, 'F')
-
 
 main()
