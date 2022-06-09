@@ -1,3 +1,19 @@
+## What is this thing?
+
+This is small pile of code, using FPDF that will generate 11x17 PDFs for 
+the stage signs we use at Hubba. It is a pain in the ass to type in 30 
+people's names into Illustrator or Indesign and create PDFs by hand. 
+With a fair amount of math, this does that automatically.
+
+Features
+
+- Given any font, maximize the person's name on the sheet in Landscape mode
+- Deals with multiple-word stage names well
+- Centers it all on the stage
+- Takes one or more names in names.txt and cranks out as many PDFs as you want.
+- Extensive debugging for margins and such
+- No BS page generator
+
 ## Setup
 
 This area uses virtualenv to manage packages.
@@ -8,12 +24,6 @@ If you change or add packages, remember to update the
 Do that with:
 
 `pip3 freeze > requirements.txt`
-
-Please note: If you are developing locally on MacOS, there are a large
-number of packages which are not available on CentOS. The existing
-requirements.txt has been heavily modified to work on CentOS. If you
-overwrite the entire file with new versions, you may break
-production/staging builds.
 
 Please check before overwriting!
 
@@ -38,12 +48,12 @@ pip3 install --upgrade pip
 pip3 install -r requirements.txt
 ```
 
-# Fucking ttfs
+# TTFs, copyright, and embedding. 
 
-Apparently you can restrict if a font can be embedded or not. ttfpatch
-will deal with this idiotic restriction.
+Apparently you can restrict if a font can be embedded or not. The fonts that we use for Hubba are open sourced
+but oddly, were locked. ttfpatch will deal with this idiotic restriction.
 
-To patch a ttf, this command will do an inplace update of the font. 2 is restricted, 4 is not.
+If you have the same problem, To patch a ttf, this command will do an inplace update of the font. 2 is restricted, 4 is not.
 
 ```
 ttfpatch/ttfpatch Fontdinerdotcom-unlocked.ttf 4
