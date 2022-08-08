@@ -268,6 +268,10 @@ def main():
     namefile = open('names.txt', 'r', encoding='utf-8')
 
     for line in namefile:
+        if len(line.strip()) < 2:
+            print("skipping blank.")
+            continue
+        
         # full syntax
         pdf = PDF(orientation='L', unit='mm', format=(HEIGHT, WIDTH))
 
