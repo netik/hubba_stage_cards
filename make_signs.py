@@ -1,6 +1,8 @@
 #!.venv/bin/python
 
+import os 
 from fpdf import FPDF
+from datetime import datetime
 
 # This python program takes in a list of names (as names.txt) and creates a pdf
 # file for each name for use in Hubba Hubba stage cards
@@ -26,6 +28,16 @@ FONT_STEP = 10
 # since most of these are names, a good starting point is about 50pt
 FONT_MIN = 100
 FONT_MAX = 800
+
+# Check whether the specified path exists or not
+
+# current date and time
+now = datetime.now()
+OUTDIR = now.strftime("%Y_%m_%d")
+
+if not os.path.exists(OUTDIR):
+    os.makedirs(OUTDIR)
+
 class PDF(FPDF):
     '''
     uses the FPDF class to make Hubba hubba stage signs
@@ -304,7 +316,7 @@ def main():
         # place the name
         pdf.add_name(line.strip().replace(' ', '\n'))
 
-        outputfn = 'out/' + line.strip().replace(' ', '_') + '.pdf'
+        outputfn = OUTDIR + '/' + line.strip().replace(' ', '_') + '.pdf'
         pdf.output(outputfn, 'F')
 
 main()
