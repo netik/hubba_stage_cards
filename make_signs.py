@@ -9,6 +9,7 @@ from datetime import datetime
 
 # --- constants ---
 IN_TO_MM = 25.4
+
 # A point equals 1/72 of an inch, that is to say about 0.35 mm (an inch being
 # 2.54 cm). This is a very common unit in typography; font sizes are expressed
 # in this unit. The default value is mm.
@@ -20,12 +21,12 @@ HEIGHT = 11 * IN_TO_MM
 WIDTH = 17 * IN_TO_MM
 
 LEADING = 5  # mm - extra spacing between lines
-DEBUG = False  # set to True to see lines and bounding boxes
+DEBUG = True  # set to True to see lines and bounding boxes
 
 # when trying to find the next font size that fits, what do we step by?
-FONT_STEP = 10
+FONT_STEP = 2
 
-# since most of these are names, a good starting point is about 50pt
+# since most of these are names, a good starting point is about 100pt
 FONT_MIN = 100
 FONT_MAX = 800
 
@@ -180,33 +181,42 @@ class PDF(FPDF):
         while True:
             self.set_font_size(font_size)
             # get_string_width is problemmatic - if you feed it 'major
-            # subtle-tease' it puts all of that together and tries to get the
+            # subtle-tease' it puts all of that together and tries to fthe
             # length as one line ignoring word breaks. So, we use the longest
             # word instead.
-            text_width = self.get_string_width(self.get_longest_word(text))
 
+            # strategy 1, is we have a single line of text. 
+            if (len(text.split()) < 3):
+                text_width = self.get_string_width(text)
+            else:
+                # stragegy 2, we have multiple lines of text, so use the widest word
+                text_width = self.get_string_width(self.get_longest_word(text))
+                
             # HACK: maybe this is a crap idea too? Are there better font-height metrics?
-            font_height = self.get_font_height(font_size, "XXXX")
+            font_height = self.get_font_height(font_size, self.get_longest_word(text))
             text_height = self.get_multi_cell_height(
                 self.w, font_height + LEADING, text, border=0, align='C')
 
-            print(f'{font_size} px {font_size * PT_TO_MM} mm')
-            print(f'font_size / font_height: {font_height}')
-            print(f'text width: {text_width}, text height {text_height}')
+            print(f'\nTrying {font_size:.2f} px {font_size * PT_TO_MM:.2f} mm')
+            print(f'font_size / font_height: {font_height:.2f}')
+            print(f'text width: {text_width:.2f}, text height {text_height:.2f}')
 
-            if text_width > max_width:
+            if text_width > (max_width - self.l_margin - self.r_margin):
                 print(
-                    f'LIMIT: font width {text_width} mm maxed out at {max_width}')
+                    f'LIMIT: font width {text_width:.2f} mm maxed out at {max_width:.2f}')
+                font_size = font_size - step
                 break
 
             # for some reason this doens't work well and the bottom margin is always wrong.
             if text_height > (self.h - self.t_margin - self.t_margin):
                 print(
-                    f'LIMIT:  overall text height {text_height} exceeds {self.h - self.t_margin - self.t_margin}mm')
+                    f'LIMIT:  overall text height {text_height:.2f} exceeds {self.h - self.t_margin - self.t_margin:.2f}mm')
+                font_size = font_size - step
+
                 break
 
             if font_size >= font_max:
-                print(f'LIMIT: font size maxed out at {font_size}')
+                print(f'LIMIT: font size maxed out at {font_size:.2f}')
                 break
 
             font_size += step  # larger step is faster, smaller step is more accurate
@@ -239,8 +249,8 @@ class PDF(FPDF):
         self.set_xy(0.0, 0.0)
         self.set_font(self.MYFONT, '', 100)
         self.set_text_color(0, 0, 0)
+
         metrics = self.get_max_font_size(txt, self.w)
-        print(metrics)
 
         # debug lines
         if DEBUG:
@@ -251,7 +261,11 @@ class PDF(FPDF):
         y_offset = ((self.h - self.t_margin) / 2) - (metrics['text_height'] / 2)
 
         if DEBUG:
-            print(f'y_offset: {y_offset}')  
+            print (f'   page height: {self.h:.2f}')
+            print (f'   t_margin:    {self.t_margin:.2f}')
+            print (f'   text_height: {metrics["text_height"]:.2f}')
+            print (f'   font_height: {metrics["font_height"]:.2f}')   
+            print(f'   y_offset: {y_offset}')  
             self.make_labelled_line(y_offset, 0, 255, 0, 'YOFFSET')
 
         self.set_xy(0, y_offset)
@@ -297,9 +311,9 @@ def main():
         # draw the margins if we can
         if DEBUG:
             print('\n')
-            print(f'page WIDTH: {pdf.w} page height: {pdf.h}')
-            print(f'marginL: {pdf.l_margin} marginR: {pdf.r_margin}')
-            print(f'marginT: {pdf.t_margin} marginB: {pdf.b_margin}')
+            print(f'page WIDTH: {pdf.w:.2f} page height: {pdf.h:.2f}')
+            print(f'marginL: {pdf.l_margin:.2f} marginR: {pdf.r_margin:.2f}')
+            print(f'marginT: {pdf.t_margin:.2f} marginB: {pdf.b_margin:.2f}')
 
             # draw that.
             pdf.set_draw_color(255, 255, 0)
@@ -308,13 +322,20 @@ def main():
 
             # note that we are going to use t_margin twice, because b_margin is
             # always zero when autopagebreak is off
-            pdf.rect(pdf.l_margin, pdf.t_margin, pdf.w-pdf.r_margin -
-                     pdf.l_margin, pdf.h - pdf.t_margin - pdf.t_margin, 'D')
+            pdf.rect(pdf.l_margin,  # x
+                     pdf.t_margin,  # y
+                     pdf.w - pdf.r_margin - pdf.l_margin,  # w
+                     pdf.h - pdf.t_margin - pdf.t_margin,  # h
+                     'D')
 
         print(f'\n{line.strip()}\n')
 
         # place the name
-        pdf.add_name(line.strip().replace(' ', '\n'))
+        # if there are < 3 tokes, we don't break the line
+        if len(line.split()) < 3:
+            pdf.add_name(line.strip())
+        else:
+            pdf.add_name(line.strip().replace(' ', '\n'))
 
         outputfn = OUTDIR + '/' + line.strip().replace(' ', '_') + '.pdf'
         pdf.output(outputfn, 'F')
