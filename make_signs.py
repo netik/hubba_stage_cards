@@ -288,8 +288,50 @@ class PDF(FPDF):
                             txt=txt,
                             border=0)
 
+def make_sign(line):
+    # full syntax
+    pdf = PDF(orientation='L', unit='mm', format=(HEIGHT, WIDTH))
 
-def main():
+    # sometimes if we are close to the page limits which casues auto page break
+    # to fire and create new pages. turn this off.
+    pdf.set_auto_page_break(False)
+    pdf.add_font(family='diner', style='',
+                    fname='./Fontdinerdotcom-unlocked.ttf', uni=True)
+    pdf.add_page()
+
+    # draw the margins if we can
+    if DEBUG:
+        print('\n')
+        print(f'page WIDTH: {pdf.w:.2f} page height: {pdf.h:.2f}')
+        print(f'marginL: {pdf.l_margin:.2f} marginR: {pdf.r_margin:.2f}')
+        print(f'marginT: {pdf.t_margin:.2f} marginB: {pdf.b_margin:.2f}')
+
+        # draw that.
+        pdf.set_draw_color(255, 255, 0)
+        pdf.rect(0, 0, pdf.w, pdf.h, 'D')
+        pdf.set_draw_color(255, 0, 0)
+
+        # note that we are going to use t_margin twice, because b_margin is
+        # always zero when autopagebreak is off
+        pdf.rect(pdf.l_margin,  # x
+                    pdf.t_margin,  # y
+                    pdf.w - pdf.r_margin - pdf.l_margin,  # w
+                    pdf.h - pdf.t_margin - pdf.t_margin,  # h
+                    'D')
+
+    print(f'\n{line.strip()}\n')
+
+    # place the name
+    # if there are < 3 tokes, we don't break the line
+    if len(line.split()) < 3:
+        pdf.add_name(line.strip())
+    else:
+        pdf.add_name(line.strip().replace(' ', '\n'))
+
+    outputfn = OUTDIR + '/' + line.strip().replace(' ', '_') + '.pdf'
+    pdf.output(outputfn, 'F')
+
+def make_from_file():
     ''' program start '''
     namefile = open('names.txt', 'r', encoding='utf-8')
 
@@ -297,47 +339,16 @@ def main():
         if len(line.strip()) < 2:
             print("skipping blank.")
             continue
-        
-        # full syntax
-        pdf = PDF(orientation='L', unit='mm', format=(HEIGHT, WIDTH))
+        print("make" + line.strip())
+        make_sign(line)
 
-        # sometimes if we are close to the page limits which casues auto page break
-        # to fire and create new pages. turn this off.
-        pdf.set_auto_page_break(False)
-        pdf.add_font(family='diner', style='',
-                     fname='./Fontdinerdotcom-unlocked.ttf', uni=True)
-        pdf.add_page()
+def make_signs_from_lines(lines):
+    for line in lines:
+        if len(line.strip()) < 2:
+            print("skipping blank.")
+            continue
+        make_sign(line)
+    
+if __name__ == '__main__':
+    make_from_file()
 
-        # draw the margins if we can
-        if DEBUG:
-            print('\n')
-            print(f'page WIDTH: {pdf.w:.2f} page height: {pdf.h:.2f}')
-            print(f'marginL: {pdf.l_margin:.2f} marginR: {pdf.r_margin:.2f}')
-            print(f'marginT: {pdf.t_margin:.2f} marginB: {pdf.b_margin:.2f}')
-
-            # draw that.
-            pdf.set_draw_color(255, 255, 0)
-            pdf.rect(0, 0, pdf.w, pdf.h, 'D')
-            pdf.set_draw_color(255, 0, 0)
-
-            # note that we are going to use t_margin twice, because b_margin is
-            # always zero when autopagebreak is off
-            pdf.rect(pdf.l_margin,  # x
-                     pdf.t_margin,  # y
-                     pdf.w - pdf.r_margin - pdf.l_margin,  # w
-                     pdf.h - pdf.t_margin - pdf.t_margin,  # h
-                     'D')
-
-        print(f'\n{line.strip()}\n')
-
-        # place the name
-        # if there are < 3 tokes, we don't break the line
-        if len(line.split()) < 3:
-            pdf.add_name(line.strip())
-        else:
-            pdf.add_name(line.strip().replace(' ', '\n'))
-
-        outputfn = OUTDIR + '/' + line.strip().replace(' ', '_') + '.pdf'
-        pdf.output(outputfn, 'F')
-
-main()
