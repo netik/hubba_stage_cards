@@ -21,7 +21,7 @@ HEIGHT = 11 * IN_TO_MM
 WIDTH = 17 * IN_TO_MM
 
 LEADING = 5  # mm - extra spacing between lines
-DEBUG = True  # set to True to see lines and bounding boxes
+DEBUG = False  # set to True to see lines and bounding boxes
 
 # when trying to find the next font size that fits, what do we step by?
 FONT_STEP = 2
