@@ -1,6 +1,7 @@
 #!.venv/bin/python
 
 import os
+import shutil
 from fpdf import FPDF
 from datetime import datetime
 
@@ -336,7 +337,7 @@ class PDF(FPDF):
             )
 
 
-def make_sign(line):
+def make_sign(line, output_dir=OUTDIR):
     # full syntax
     pdf = PDF(orientation="L", unit="mm", format=(HEIGHT, WIDTH))
 
@@ -375,7 +376,7 @@ def make_sign(line):
     # place the name
     # if there are < 3 tokes, we don't break the line (e.g. 'Leon G. Ray')
     pdf.add_name(line.strip())
-    outputfn = OUTDIR + "/" + line.strip().replace(" ", "_") + ".pdf"
+    outputfn = output_dir + "/" + line.strip().replace(" ", "_") + ".pdf"
     pdf.output(outputfn, "F")
 
 def make_from_file():
@@ -390,13 +391,15 @@ def make_from_file():
         make_sign(line)
 
 
-def make_signs_from_lines(lines):
+def make_signs_from_lines(lines, output_dir, base_name=None):
     for line in lines:
         if len(line.strip()) < 2:
             print("skipping blank.")
             continue
-        make_sign(line)
+        make_sign(line, output_dir)
 
+    if base_name:
+        shutil.make_archive(base_name=base_name, format="zip", root_dir=output_dir)
 
 if __name__ == "__main__":
     make_from_file()
