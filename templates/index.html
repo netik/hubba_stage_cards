@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Hubba Sign Generator</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <main>
+    <div class="login">
+      <h1>Hubba Sign Generator</h1>
+      <form method="post" action="/make">
+        <fieldset>
+          <legend>Sign Generator Form</legend>
+          <p>Enter names, one per line.</p>
+          <p>
+            <textarea id="namelist" name="namelist" width="100" rows="10"></textarea>
+          </p>
+          <p class="submit">
+            <input type="submit" id="commit" name="commit" value="Generate">
+          </p>
+        </fieldset>
+      </form>
+    </div>
+  </main>
+  <footer>
+    <!-- Footer content goes here -->
+  </footer>
+</body>
+</html>
