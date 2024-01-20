@@ -3,18 +3,28 @@
 <head>
   <meta charset="utf-8">
   <title>Hubba Sign Generator</title>
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/signs/static/css/style.css">
 </head>
 <body>
   <main>
     <div class="login">
       <h1>Hubba Sign Generator</h1>
-      <form method="post" action="/make">
+      <form method="post" action="/signs/make">
         <fieldset>
           <legend>Sign Generator Form</legend>
           <p>Enter names, one per line.</p>
           <p>
-            <textarea id="namelist" name="namelist" width="100" rows="10"></textarea>
+	    <div style="display: flex">
+	      <textarea id="namelist" name="namelist" style="flex: 1" width="100%" rows="10"></textarea>
+            </div>
+          </p>
+	  <p>
+	    This page will generate a zip file containing PDFs of the
+	    names entered and will automatically fit the names to
+	    a standard 8x14 (legal) page size. 
+	  </p>
+	  <p>
+	    After clickingg "<b>generate</b>", check your downloads folder for "signs.zip"
           </p>
           <p class="submit">
             <input type="submit" id="commit" name="commit" value="Generate">

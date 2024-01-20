@@ -9,7 +9,7 @@ from make_signs import make_signs_from_lines
 from flask import Flask, request, send_from_directory, render_template, send_file
 import uuid
 
-app = Flask(__name__, static_url_path='/static', static_folder='static')
+app = Flask(__name__, static_url_path='/signs/static', static_folder='static')
 
 def root_dir():  # pragma: no cover
     return os.path.abspath(os.path.dirname(__file__))
@@ -26,7 +26,7 @@ def get_file(filename):  # pragma: no cover
     except IOError as exc:
         return str(exc)
 
-@app.route('/make', methods = ['POST'])
+@app.route('/signs/make', methods = ['POST'])
 def make():
     data = request.form['namelist']
     id = str(uuid.uuid4())
@@ -39,11 +39,11 @@ def make():
                      download_name='signs.zip', 
                      as_attachment=True)
 
-@app.route('/<path:path>')
+@app.route('/signs/<path:path>')
 def send_report(path):
     return send_from_directory('web', path)
 
-@app.route("/") 
+@app.route("/signs/") 
 def hello(): 
     message = "Hello, World"
     return render_template('index.html',  
