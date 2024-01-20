@@ -1,0 +1,17 @@
+[Unit]
+Description=uWSGI instance to serve sign maker
+After=network.target
+
+[Service]
+User=signs
+Group=www-data
+
+WorkingDirectory=/hubba/hubba_stage_cards/
+Environment="PATH=/hubba/hubba_stage_cards/.venv/bin:$PATH"
+ExecStart=/hubba/hubba_stage_cards/.venv/bin/uwsgi --ini server.ini
+
+[Install]
+WantedBy=multi-user.target
+
+
+
