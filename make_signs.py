@@ -32,6 +32,13 @@ FONT_MIN = 100
 FONT_MAX = 800
 
 MAX_TOKENS_PER_LINE = 3
+
+# Words that split the line; these get a smaller font on their own line
+CONNECTOR_WORDS = frozenset({"and", "&", "with", "featuring", "presents"})
+# Connector lines use this ratio of the main segment font size
+CONNECTOR_FONT_RATIO = 0.55
+CONNECTOR_FONT_MIN = 24  # pt minimum so connector text stays readable
+
 # Check whether the specified path exists or not
 
 # current date and time
@@ -40,6 +47,30 @@ OUTDIR = now.strftime("%Y_%m_%d")
 
 if not os.path.exists(OUTDIR):
     os.makedirs(OUTDIR)
+
+
+def parse_into_segments(text):
+    """
+    Split text into main blocks and connector tokens.
+    Returns list of {"type": "main"|"connector", "text": str}.
+    E.g. "Charlie quinn and friends" -> [main "Charlie quinn", connector "and", main "friends"]
+    """
+    words = text.split()
+    if not words:
+        return []
+    segments = []
+    current = []
+    for word in words:
+        if word == "&" or word.lower() in CONNECTOR_WORDS:
+            if current:
+                segments.append({"type": "main", "text": " ".join(current)})
+                current = []
+            segments.append({"type": "connector", "text": word})
+        else:
+            current.append(word)
+    if current:
+        segments.append({"type": "main", "text": " ".join(current)})
+    return segments
 
 
 class PDF(FPDF):
@@ -172,6 +203,79 @@ class PDF(FPDF):
         longest = max(words, key=len)
         return longest
 
+    def get_max_font_for_width(self, text, max_width_mm):
+        """Largest font size for which get_string_width(text) <= max_width_mm."""
+        font_size = FONT_MIN
+        while font_size <= FONT_MAX:
+            self.set_font(self.MYFONT, "", font_size)
+            if self.get_string_width(text) > max_width_mm:
+                font_size -= FONT_STEP
+                break
+            font_size += FONT_STEP
+        font_size = max(FONT_MIN, min(FONT_MAX, font_size))
+        self.set_font(self.MYFONT, "", font_size)
+        return font_size
+
+    def get_segment_layout(self, text):
+        """
+        Greedy segment-based layout: split on connector words, maximize main
+        segment font, use smaller font for connectors. Returns (lines, total_height_mm)
+        where lines is list of (text, font_size_pt).
+        """
+        segments = parse_into_segments(text)
+        available_width = self.w - self.l_margin - self.r_margin
+        available_height = self.h - 2 * self.t_margin
+
+        if not segments:
+            return [], 0.0
+
+        if len(segments) == 1 and segments[0]["type"] == "main":
+            # Single block: one line, maximize font to fit width (and height is one line)
+            font_size = self.get_max_font_for_width(segments[0]["text"], available_width)
+            line_height = font_size * PT_TO_MM + LEADING
+            if line_height > available_height:
+                # scale down to fit height
+                scale = available_height / line_height
+                font_size = max(FONT_MIN, int(font_size * scale))
+                line_height = font_size * PT_TO_MM + LEADING
+            return [(segments[0]["text"], font_size)], line_height
+
+        # Multiple segments: main lines as large as width allows, connectors smaller
+        main_font = FONT_MAX
+        for seg in segments:
+            if seg["type"] == "main":
+                self.set_font(self.MYFONT, "", main_font)
+                fit = self.get_max_font_for_width(seg["text"], available_width)
+                main_font = min(main_font, fit)
+        connector_font = max(
+            CONNECTOR_FONT_MIN,
+            int(main_font * CONNECTOR_FONT_RATIO),
+        )
+
+        lines = []
+        total_height = 0.0
+        for seg in segments:
+            pt = main_font if seg["type"] == "main" else connector_font
+            lines.append((seg["text"], pt))
+            total_height += pt * PT_TO_MM + LEADING
+
+        if total_height > available_height:
+            scale = available_height / total_height
+            main_font = max(FONT_MIN, int(main_font * scale))
+            connector_font = max(
+                CONNECTOR_FONT_MIN,
+                int(main_font * CONNECTOR_FONT_RATIO),
+            )
+            total_height = 0.0
+            new_lines = []
+            for seg in segments:
+                pt = main_font if seg["type"] == "main" else connector_font
+                new_lines.append((seg["text"], pt))
+                total_height += pt * PT_TO_MM + LEADING
+            lines = new_lines
+
+        return lines, total_height
+
     def get_max_font_size(
         self, text, max_width, step=FONT_STEP, font_min=FONT_MIN, font_max=FONT_MAX
     ):
@@ -287,54 +391,49 @@ class PDF(FPDF):
         self.dashed_line(0, y1, self.w, y1, 3, 2)
 
     def add_name(self, txt):
-        """add one large name to the page"""
-        # setup font
+        """add one large name to the page using greedy segment layout"""
         self.set_xy(0.0, 0.0)
         self.set_font(self.MYFONT, "", 100)
         self.set_text_color(0, 0, 0)
 
-        metrics = self.get_max_font_size(txt, self.w)
+        lines, total_height = self.get_segment_layout(txt)
 
         # debug lines
         if DEBUG:
             self.make_labelled_line(self.t_margin, 255, 0, 0, "MARGIN")
 
-        # there's a little fudge factor here because the text is a little oddly shaped
-        # we probably shouldn't subtract t-margin.
-        y_offset = ((self.h - self.t_margin) / 2) - (metrics["text_height"] / 2)
+        y_offset = self.t_margin + ((self.h - 2 * self.t_margin) - total_height) / 2
 
         if DEBUG:
-            print(f"      strategy: {metrics['strategy']}")
-            print(f"   page height: {self.h:.2f}")
-            print(f"   t_margin:    {self.t_margin:.2f}")
-            print(f'   text_height: {metrics["text_height"]:.2f}')
-            print(f'   font_height: {metrics["font_height"]:.2f}')
-            print(f"   y_offset: {y_offset}")
+            print(f"   segments: {len(lines)}")
+            print(f"   total_height: {total_height:.2f} mm")
+            print(f"   y_offset: {y_offset:.2f}")
             self.make_labelled_line(y_offset, 0, 255, 0, "YOFFSET")
 
         self.set_xy(0, y_offset)
         self.set_fill_color(0, 0, 0)
         self.set_text_color(0, 0, 0)
-        self.set_font(self.MYFONT, "", metrics["font_size"])
 
-        # Finally, draw our text!
-        if DEBUG:
-            self.set_draw_color(255, 0, 255)
-            self.multi_cell(
-                w=self.w,
-                h=metrics["font_height"] + LEADING,
-                align="C",
-                txt=txt,
-                border=1,
-            )
-        else:
-            self.multi_cell(
-                w=self.w,
-                h=metrics["font_height"] + LEADING,
-                align="C",
-                txt=txt,
-                border=0,
-            )
+        for line_text, font_size in lines:
+            line_height = font_size * PT_TO_MM + LEADING
+            self.set_font(self.MYFONT, "", font_size)
+            if DEBUG:
+                self.set_draw_color(255, 0, 255)
+                self.multi_cell(
+                    w=self.w,
+                    h=line_height,
+                    align="C",
+                    txt=line_text,
+                    border=1,
+                )
+            else:
+                self.multi_cell(
+                    w=self.w,
+                    h=line_height,
+                    align="C",
+                    txt=line_text,
+                    border=0,
+                )
 
 
 def make_sign(line, output_dir=OUTDIR):
