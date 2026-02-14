@@ -27,8 +27,31 @@ PT_TO_MM = 0.352778
 PAGE_HEIGHT_MM = 11 * IN_TO_MM
 PAGE_WIDTH_MM = 17 * IN_TO_MM
 
-LEADING_MM = 5  # Extra spacing between lines
-DEBUG = False  # Set True to draw margin/label lines and bounding boxes
+# Spacing: extra mm between lines (intra-line spacing)
+LEADING_MM = 5
+
+# Multiplier on metric-based line height to avoid clipping (e.g. two-word names)
+LINE_HEIGHT_SAFETY = 1.10
+# Connector/lead-in lines use smaller safety so they take less vertical room → main text can be bigger
+LINE_HEIGHT_SAFETY_CONNECTOR = 1.08
+
+# Debug: print layout info (segments, heights, font metrics) to the console
+DEBUG = False
+# Debug: draw bounding boxes on the PDF (red margin, cyan text block, magenta per-line, yellow page)
+DEBUG_BOUNDING = False
+
+# Content area margins (mm); text is sized and drawn within this box
+CONTENT_MARGIN_MM = 10
+# Extra mm subtracted from content width when sizing and drawing (keeps text off edges)
+WIDTH_SAFETY_MM = 12.0
+
+# Vertical position: fraction of (available_height - total_height) above the block.
+# For short blocks (1–2 lines) use smaller ratio so text starts higher.
+VERTICAL_CENTER_RATIO = 0.5
+VERTICAL_CENTER_RATIO_SHORT = 0.28  # when 1–2 lines
+
+# Font units per em (PDF/TTF typically 1000). Used with Ascent/Descent for line height.
+FONT_UNITS_PER_EM = 1000
 
 # Font size search
 FONT_STEP = 2
@@ -41,6 +64,10 @@ CONNECTOR_WORDS: frozenset[str] = frozenset({
 })
 CONNECTOR_FONT_RATIO = 0.55  # Connector line font = main * this
 CONNECTOR_FONT_MIN_PT = 24   # Minimum connector font size (pt)
+
+# Long main text: max words per line (chunked); lead-in words get a smaller line
+MAX_WORDS_PER_LINE = 3
+LEAD_IN_WORDS: frozenset[str] = frozenset({"the", "a", "an"})
 
 
 class Segment(TypedDict):
@@ -96,6 +123,47 @@ def parse_into_segments(text: str) -> list[Segment]:
         segments.append({"type": "main", "text": " ".join(current)})
 
     return segments
+
+
+def expand_segments_to_lines(segments: list[Segment]) -> list[Segment]:
+    """
+    Expand long main segments into multiple lines (word limit + optional lead-in).
+
+    - Main segments with more than MAX_WORDS_PER_LINE words are chunked into
+      lines of at most that many words.
+    - If a main segment starts with a lead-in word ("the", "a", "an") and has
+      more than one word, that word is emitted as a connector-sized line, then
+      the rest is chunked by MAX_WORDS_PER_LINE as above.
+
+    Args:
+        segments: Output of parse_into_segments.
+
+    Returns:
+        New list of segments (each main chunk is one segment; lead-in is one
+        connector segment) for layout.
+    """
+    result: list[Segment] = []
+    for seg in segments:
+        if seg["type"] == "connector":
+            result.append(seg)
+            continue
+        words = seg["text"].split()
+        if not words:
+            continue
+        # Lead-in: "the infamously long..." -> "the" (small) + "infamously long named" / "luma jaguar"
+        if words[0].lower() in LEAD_IN_WORDS and len(words) > 1:
+            result.append({"type": "connector", "text": words[0]})
+            rest_words = words[1:]
+            for i in range(0, len(rest_words), MAX_WORDS_PER_LINE):
+                chunk = rest_words[i : i + MAX_WORDS_PER_LINE]
+                result.append({"type": "main", "text": " ".join(chunk)})
+        elif len(words) > MAX_WORDS_PER_LINE:
+            for i in range(0, len(words), MAX_WORDS_PER_LINE):
+                chunk = words[i : i + MAX_WORDS_PER_LINE]
+                result.append({"type": "main", "text": " ".join(chunk)})
+        else:
+            result.append(seg)
+    return result
 
 
 class StageCardPDF(FPDF):
@@ -246,6 +314,84 @@ class StageCardPDF(FPDF):
         self.set_font(self.FONT_FAMILY, "", font_size)
         return font_size
 
+    def _get_font_height_scale(self) -> tuple[float, dict]:
+        """
+        Height scale (font units per em) from current font. Prefers FontBBox over
+        Ascent/Descent so glyphs that extend beyond the OS/2 metrics don't clip.
+        Returns (scale, {"scale": float, "source": "FontBBox"|"AscentDescent", ...}).
+        """
+        desc = getattr(self, "current_font", None) and self.current_font.get("desc")
+        if isinstance(desc, dict):
+            # FontBBox is the actual glyph bounding box [llx, lly, urx, ury]
+            bbox = desc.get("FontBBox")
+            if bbox:
+                if isinstance(bbox, str):
+                    parts = bbox.replace("[", "").replace("]", "").split()
+                    if len(parts) >= 4:
+                        lly = float(parts[1])
+                        ury = float(parts[3])
+                        height_units = ury - lly
+                        scale = height_units / FONT_UNITS_PER_EM
+                        return scale, {
+                            "scale": scale,
+                            "source": "FontBBox",
+                            "bbox_lly": lly,
+                            "bbox_ury": ury,
+                        }
+                elif isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+                    lly, ury = float(bbox[1]), float(bbox[3])
+                    scale = (ury - lly) / FONT_UNITS_PER_EM
+                    return scale, {"scale": scale, "source": "FontBBox"}
+            ascent = desc.get("Ascent", 750)
+            descent = desc.get("Descent", -250)
+            font_height_units = ascent + abs(descent)
+            scale = font_height_units / FONT_UNITS_PER_EM
+            return scale, {
+                "scale": scale,
+                "source": "AscentDescent",
+                "ascent": ascent,
+                "descent": descent,
+            }
+        return 0.92, {"scale": 0.92, "source": "fallback"}
+
+    def _get_line_height_mm(self, font_pt: float, *, is_connector: bool = False) -> float:
+        """
+        Line height in mm from the current font's metrics.
+
+        Prefers FontBBox (actual glyph bounds) over Ascent/Descent. Connector
+        lines use a smaller safety so they take less vertical room and main text
+        can be larger.
+        """
+        self.set_font(self.FONT_FAMILY, "", font_pt)
+        scale, _ = self._get_font_height_scale()
+        safety = LINE_HEIGHT_SAFETY_CONNECTOR if is_connector else LINE_HEIGHT_SAFETY
+        glyph_height_mm = font_pt * PT_TO_MM * scale * safety
+        return glyph_height_mm + LEADING_MM
+
+    def _get_line_height_and_metrics(
+        self, font_pt: float, *, is_connector: bool = False
+    ) -> tuple[float, dict]:
+        """
+        Same as _get_line_height_mm but also return metrics dict for debugging.
+        """
+        self.set_font(self.FONT_FAMILY, "", font_pt)
+        scale, scale_info = self._get_font_height_scale()
+        safety = LINE_HEIGHT_SAFETY_CONNECTOR if is_connector else LINE_HEIGHT_SAFETY
+        glyph_height_mm = font_pt * PT_TO_MM * scale * safety
+        line_height_mm = glyph_height_mm + LEADING_MM
+        desc = getattr(self, "current_font", None) and self.current_font.get("desc")
+        ascent = desc.get("Ascent", 750) if isinstance(desc, dict) else 750
+        descent = desc.get("Descent", -250) if isinstance(desc, dict) else -250
+        metrics = {
+            "ascent": ascent,
+            "descent": descent,
+            "scale": scale,
+            "source": scale_info.get("source", "?"),
+            "glyph_height_mm": glyph_height_mm,
+            "line_height_mm": line_height_mm,
+        }
+        return line_height_mm, metrics
+
     def get_segment_layout(  # pylint: disable=too-many-locals
         self, text: str
     ) -> tuple[list[tuple[str, int]], float]:
@@ -263,9 +409,12 @@ class StageCardPDF(FPDF):
             (lines, total_height_mm): list of (line_text, font_size_pt) and
             total height in mm.
         """
-        segments = parse_into_segments(text)
-        available_width = self.w - self.l_margin - self.r_margin
-        available_height = self.h - 2 * self.t_margin
+        segments = expand_segments_to_lines(parse_into_segments(text))
+        available_width = max(
+            10.0,
+            self.w - self.l_margin - self.r_margin - WIDTH_SAFETY_MM,
+        )
+        available_height = self.h - self.t_margin - self.b_margin
 
         if not segments:
             return [], 0.0
@@ -273,12 +422,12 @@ class StageCardPDF(FPDF):
         if len(segments) == 1 and segments[0]["type"] == "main":
             text_only = segments[0]["text"]
             font_size = self._get_max_font_for_width(text_only, available_width)
-            line_height_mm = font_size * PT_TO_MM + LEADING_MM
-            if line_height_mm > available_height:
+            line_height_mm = self._get_line_height_mm(font_size, is_connector=False)
+            while line_height_mm > available_height and font_size > FONT_MIN:
                 scale = available_height / line_height_mm
                 font_size = max(FONT_MIN, int(font_size * scale))
-                line_height_mm = font_size * PT_TO_MM + LEADING_MM
-            return [(text_only, font_size)], line_height_mm
+                line_height_mm = self._get_line_height_mm(font_size, is_connector=False)
+            return [(text_only, font_size, False)], line_height_mm
 
         # Multiple segments: main font = min of max-fit per main segment
         main_font = FONT_MAX
@@ -293,12 +442,13 @@ class StageCardPDF(FPDF):
             int(main_font * CONNECTOR_FONT_RATIO),
         )
 
-        lines: list[tuple[str, int]] = []
+        lines: list[tuple[str, int, bool]] = []
         total_height = 0.0
         for seg in segments:
             font_pt = main_font if seg["type"] == "main" else connector_font
-            lines.append((seg["text"], font_pt))
-            total_height += font_pt * PT_TO_MM + LEADING_MM
+            is_conn = seg["type"] == "connector"
+            lines.append((seg["text"], font_pt, is_conn))
+            total_height += self._get_line_height_mm(font_pt, is_connector=is_conn)
 
         if total_height > available_height:
             scale = available_height / total_height
@@ -311,9 +461,46 @@ class StageCardPDF(FPDF):
             lines = []
             for seg in segments:
                 font_pt = main_font if seg["type"] == "main" else connector_font
-                lines.append((seg["text"], font_pt))
-                total_height += font_pt * PT_TO_MM + LEADING_MM
+                is_conn = seg["type"] == "connector"
+                lines.append((seg["text"], font_pt, is_conn))
+                total_height += self._get_line_height_mm(font_pt, is_connector=is_conn)
 
+        return lines, total_height
+
+    def _scale_lines_to_fit_vertical(
+        self,
+        lines: list[tuple[str, int, bool]],
+        available_vertical: float,
+    ) -> tuple[list[tuple[str, int, bool]], float]:
+        """
+        Scale down font sizes until total line height fits in available_vertical.
+        Returns (scaled lines, new total_height). Preserves is_connector per line.
+        """
+        if not lines:
+            return [], 0.0
+        total_height = sum(
+            self._get_line_height_mm(font_pt, is_connector=ic)
+            for _, font_pt, ic in lines
+        )
+        max_iter = 25
+        while total_height > available_vertical and total_height > 0 and max_iter > 0:
+            max_iter -= 1
+            prev_fonts = tuple(font_pt for _, font_pt, _ in lines)
+            scale = (available_vertical * 0.98) / total_height
+            new_lines: list[tuple[str, int, bool]] = []
+            for text, font_pt, is_conn in lines:
+                new_pt = max(FONT_MIN, int(font_pt * scale))
+                new_lines.append((text, new_pt, is_conn))
+            new_total = sum(
+                self._get_line_height_mm(font_pt, is_connector=ic)
+                for _, font_pt, ic in new_lines
+            )
+            lines = new_lines
+            total_height = new_total
+            if total_height <= available_vertical:
+                break
+            if tuple(font_pt for _, font_pt, _ in lines) == prev_fonts:
+                break
         return lines, total_height
 
     def _draw_debug_line(  # pylint: disable=too-many-arguments
@@ -324,7 +511,7 @@ class StageCardPDF(FPDF):
         blue: int,
         label: str,
     ) -> None:
-        """Draw a horizontal dashed line with a small label (DEBUG only)."""
+        """Draw a horizontal dashed line with a small label (DEBUG_BOUNDING only)."""
         font_pt = 30
         self.set_xy(0, y_mm - (font_pt * PT_TO_MM))
         self.set_line_width(0.2)
@@ -351,39 +538,103 @@ class StageCardPDF(FPDF):
         self.set_xy(0.0, 0.0)
         self.set_font(self.FONT_FAMILY, "", 100)
         self.set_text_color(0, 0, 0)
+        # No cell padding so full width is for text (avoids wrap from c_margin)
+        self.c_margin = 0
 
         lines, total_height = self.get_segment_layout(text)
+        available_vertical = self.h - self.t_margin - self.b_margin
+        content_width = self.w - self.l_margin - self.r_margin
+        # Use same width for drawing as for layout (keeps words from being cut off)
+        draw_width = max(10.0, content_width - WIDTH_SAFETY_MM)
+        draw_width = min(draw_width, content_width)  # never exceed content
+        content_right = self.w - self.r_margin
+        content_bottom = self.h - self.b_margin
+        # Red margin rect (DEBUG_BOUNDING) uses h - 2*t_margin height, so its bottom is h - t_margin
+        content_bottom_inside_red = self.h - self.t_margin
+        # Center the text block horizontally; clamp so block stays inside red margin
+        x_start = self.l_margin + max(0, (content_width - draw_width) / 2)
+        x_start = max(self.l_margin, min(x_start, self.w - self.r_margin - draw_width))
+
+        # Safety: ensure text block never exceeds page (scale down until it fits)
+        if total_height > available_vertical:
+            lines, total_height = self._scale_lines_to_fit_vertical(
+                lines, available_vertical
+            )
+
+        # Short blocks (1–2 lines) start higher; multi-line stays centered
+        n_lines = len(lines)
+        ratio = (
+            VERTICAL_CENTER_RATIO_SHORT
+            if n_lines <= 2
+            else VERTICAL_CENTER_RATIO
+        )
+        y_offset = self.t_margin + (available_vertical - total_height) * ratio
+        y_offset = min(y_offset, self.h - self.b_margin - total_height)
+        y_offset = max(self.t_margin, y_offset)
 
         if DEBUG:
-            self._draw_debug_line(self.t_margin, 255, 0, 0, "MARGIN")
-
-        y_offset = self.t_margin + (
-            (self.h - 2 * self.t_margin) - total_height
-        ) / 2
-
-        if DEBUG:
+            block_fits = (
+                total_height <= available_vertical
+                and content_width <= (self.w - self.l_margin - self.r_margin)
+                and (y_offset + total_height) <= content_bottom
+                and self.l_margin >= 0
+                and y_offset >= self.t_margin
+            )
+            if block_fits:
+                print(f"   [OK] text block fits within page")
+            else:
+                print(
+                    f"   [WARNING] text block would exceed page "
+                    f"(total_h={total_height:.1f} available={available_vertical:.1f} "
+                    f"y_end={y_offset + total_height:.1f} content_bottom={content_bottom:.1f})"
+                )
             print(f"   segments: {len(lines)}")
             print(f"   total_height: {total_height:.2f} mm")
-            print(f"   y_offset: {y_offset:.2f}")
-            self._draw_debug_line(y_offset, 0, 255, 0, "YOFFSET")
+            print(f"   y_offset: {y_offset:.2f} draw_width: {draw_width:.2f} x_start: {x_start:.2f} mm")
+            print(f"   page: w={self.w:.1f} h={self.h:.1f} content_bottom={content_bottom:.1f}")
 
-        self.set_xy(0, y_offset)
+        if DEBUG_BOUNDING:
+            self._draw_debug_line(self.t_margin, 255, 0, 0, "MARGIN")
+            self._draw_debug_line(y_offset, 0, 255, 0, "YOFFSET")
+            cyan_x = max(self.l_margin, min(x_start, self.w - self.r_margin - 1))
+            cyan_y = max(self.t_margin, min(y_offset, content_bottom_inside_red - 1))
+            cyan_w = min(draw_width, self.w - self.r_margin - cyan_x)
+            cyan_h = min(total_height, max(0, content_bottom_inside_red - cyan_y))
+            self.set_draw_color(0, 200, 255)
+            self.set_line_width(0.5)
+            self.rect(cyan_x, cyan_y, cyan_w, cyan_h, "D")
+            self.set_line_width(0.2)
+
         self.set_fill_color(0, 0, 0)
         self.set_text_color(0, 0, 0)
 
-        for line_text, font_pt in lines:
-            line_height_mm = font_pt * PT_TO_MM + LEADING_MM
-            self.set_font(self.FONT_FAMILY, "", font_pt)
-            border = 1 if DEBUG else 0
+        current_y = y_offset
+        for i, (line_text, font_pt, is_connector) in enumerate(lines):
+            line_height_mm, metrics = self._get_line_height_and_metrics(
+                font_pt, is_connector=is_connector
+            )
             if DEBUG:
-                self.set_draw_color(255, 0, 255)
+                print(
+                    f"   line {i + 1}: {font_pt:.0f} pt "
+                    f"| {metrics.get('source', '?')} scale={metrics['scale']:.3f} "
+                    f"| glyph_h={metrics['glyph_height_mm']:.2f} mm "
+                    f"line_h={metrics['line_height_mm']:.2f} mm "
+                    f"| '{line_text}'"
+                )
+            self.set_xy(x_start, current_y)
+            self.set_font(self.FONT_FAMILY, "", font_pt)
+            w_cell = min(draw_width, self.w - self.r_margin - x_start)
+            border = 1 if DEBUG_BOUNDING else 0
+            if DEBUG_BOUNDING:
+                self.set_draw_color(255, 0, 255)  # magenta per-line box
             self.multi_cell(
-                w=self.w,
+                w=w_cell,
                 h=line_height_mm,
                 align="C",
                 txt=line_text,
                 border=border,
             )
+            current_y += line_height_mm
 
 
 def make_sign(
@@ -421,6 +672,7 @@ def make_sign(
         uni=True,
     )
     pdf.add_page()
+    pdf.set_margins(CONTENT_MARGIN_MM, CONTENT_MARGIN_MM)
 
     if DEBUG:
         print(f"\npage WIDTH: {pdf.w:.2f} mm  height: {pdf.h:.2f} mm")
@@ -428,6 +680,7 @@ def make_sign(
             f"margin L: {pdf.l_margin:.2f} R: {pdf.r_margin:.2f} "
             f"T: {pdf.t_margin:.2f} B: {pdf.b_margin:.2f}"
         )
+    if DEBUG_BOUNDING:
         pdf.set_draw_color(255, 255, 0)
         pdf.rect(0, 0, pdf.w, pdf.h, "D")
         pdf.set_draw_color(255, 0, 0)
