@@ -36,7 +36,7 @@ LINE_HEIGHT_SAFETY = 1.10
 LINE_HEIGHT_SAFETY_CONNECTOR = 1.08
 
 # Debug: print layout info (segments, heights, font metrics) to the console
-DEBUG = False
+DEBUG = True
 # Debug: draw bounding boxes on the PDF (red margin, cyan text block, magenta per-line, yellow page)
 DEBUG_BOUNDING = False
 
@@ -302,7 +302,9 @@ class StageCardPDF(FPDF):
     def _get_max_font_for_width(self, text: str, max_width_mm: float) -> int:
         """
         Largest font size (pt) for which the text fits within max_width_mm.
+        Uses coarse step then binary search for exact maximum.
         """
+        # Coarse step to find upper bound
         font_size = FONT_MIN
         while font_size <= FONT_MAX:
             self.set_font(self.FONT_FAMILY, "", font_size)
@@ -311,6 +313,16 @@ class StageCardPDF(FPDF):
                 break
             font_size += FONT_STEP
         font_size = max(FONT_MIN, min(FONT_MAX, font_size))
+        low, high = max(FONT_MIN, font_size - FONT_STEP), min(FONT_MAX, font_size + 1)
+        # Binary search for exact max
+        while low < high:
+            mid = (low + high + 1) // 2
+            self.set_font(self.FONT_FAMILY, "", mid)
+            if self.get_string_width(text) <= max_width_mm:
+                low = mid
+            else:
+                high = mid - 1
+        font_size = low
         self.set_font(self.FONT_FAMILY, "", font_size)
         return font_size
 
@@ -421,12 +433,21 @@ class StageCardPDF(FPDF):
 
         if len(segments) == 1 and segments[0]["type"] == "main":
             text_only = segments[0]["text"]
-            font_size = self._get_max_font_for_width(text_only, available_width)
+            width_max = self._get_max_font_for_width(text_only, available_width)
+            # Max font that fits height (exact from line-height formula)
+            self.set_font(self.FONT_FAMILY, "", width_max)
+            scale, _ = self._get_font_height_scale()
+            height_max_pt = (available_height - LEADING_MM) / (
+                PT_TO_MM * scale * LINE_HEIGHT_SAFETY
+            )
+            font_size = min(width_max, int(height_max_pt))
+            font_size = max(FONT_MIN, min(FONT_MAX, font_size))
+            while (
+                self._get_line_height_mm(font_size, is_connector=False) > available_height
+                and font_size > FONT_MIN
+            ):
+                font_size -= 1
             line_height_mm = self._get_line_height_mm(font_size, is_connector=False)
-            while line_height_mm > available_height and font_size > FONT_MIN:
-                scale = available_height / line_height_mm
-                font_size = max(FONT_MIN, int(font_size * scale))
-                line_height_mm = self._get_line_height_mm(font_size, is_connector=False)
             return [(text_only, font_size, False)], line_height_mm
 
         # Multiple segments: main font = min of max-fit per main segment
@@ -486,7 +507,7 @@ class StageCardPDF(FPDF):
         while total_height > available_vertical and total_height > 0 and max_iter > 0:
             max_iter -= 1
             prev_fonts = tuple(font_pt for _, font_pt, _ in lines)
-            scale = (available_vertical * 0.98) / total_height
+            scale = (available_vertical * 0.99) / total_height
             new_lines: list[tuple[str, int, bool]] = []
             for text, font_pt, is_conn in lines:
                 new_pt = max(FONT_MIN, int(font_pt * scale))
