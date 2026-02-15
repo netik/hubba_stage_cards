@@ -9,7 +9,7 @@ with text sized to fit 11x17 landscape pages.
 Markup in names:
   |  forces a line break (e.g. "Anna Nymph | Essie Hex").
   [phrase]  at the start (or after |) renders that phrase on a small
-  lead-in line (e.g. "[the princess] Luma Jaguar", "[the countess] Ruby").
+  lead-in line (e.g. "[the princess] Luma Jaguar", "[the countess] Wednesday Malfaz").
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ LEAD_IN_WORDS: frozenset[str] = frozenset({"the", "a", "an"})
 # Markup in names (in names.txt):
 # - "|" forces a line break, e.g. "Anna Nymph | Essie Hex".
 # - "[phrase]" at the start of a line (or after |) puts that phrase on a small
-#   lead-in line, e.g. "[the princess] Luma Jaguar" or "[the countess] Ruby".
+#   lead-in line, e.g. "[the princess] Luma Jaguar" or "[the countess] Wednesday Malfaz".
 FORCED_BREAK_CHAR = "|"
 LEAD_IN_BRACKET_OPEN = "["
 LEAD_IN_BRACKET_CLOSE = "]"
