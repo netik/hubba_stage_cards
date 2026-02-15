@@ -2,39 +2,57 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hubba Sign Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/signs/static/css/style.css">
 </head>
 <body>
-  <main>
-    <div class="login">
+  <main class="page">
+    <header class="header">
       <h1>Hubba Sign Generator</h1>
-      <form method="post" action="/signs/make">
-        <fieldset>
-          <legend>Sign Generator Form</legend>
-          <p>Enter names, one per line.</p>
-          <p>
-	    <div style="display: flex">
-	      <textarea id="namelist" name="namelist" style="flex: 1" width="100%" rows="10"></textarea>
-            </div>
-          </p>
-	  <p>
-	    This page will generate a zip file containing PDFs of the
-	    names entered and will automatically fit the names to
-	    a standard 8x14 (legal) page size. 
-	  </p>
-	  <p>
-	    After clickingg "<b>generate</b>", check your downloads folder for "signs.zip"
-          </p>
-          <p class="submit">
-            <input type="submit" id="commit" name="commit" value="Generate">
-          </p>
-        </fieldset>
+      <p class="tagline">Stage cards from a list of names — one PDF per name, 11×17 landscape.</p>
+    </header>
+
+    <div class="columns">
+      <form method="post" action="/signs/make" class="form form-col">
+        <label for="namelist" class="label">Names <span class="hint">one per line</span></label>
+        <textarea
+          id="namelist"
+          name="namelist"
+          class="textarea"
+          rows="12"
+          placeholder="Charlie Quinn Starling and friends&#10;Anna Nymph | Essie Hex&#10;[the princess] Luma Jaguar"
+          autofocus
+        ></textarea>
+        <p class="submit-wrap">
+          <button type="submit" class="btn">Generate signs.zip</button>
+        </p>
+        <p class="download-hint">After clicking Generate, check your downloads for <strong>signs.zip</strong>.</p>
       </form>
+
+      <aside class="help-col">
+        <h2 class="help-title">Layout tips</h2>
+        <div class="help-content">
+          <p><strong>Lead-in line</strong> — Put a phrase in brackets to show it on a smaller line above the main name:</p>
+          <ul>
+            <li><code>[the princess]</code> Luma Jaguar</li>
+            <li><code>[the countess]</code> Ruby</li>
+          </ul>
+          <p><strong>Line break</strong> — Use <code>|</code> to force a new line:</p>
+          <ul>
+            <li>Anna Nymph <code>|</code> Essie Hex → two lines</li>
+            <li>First Line <code>|</code> and <code>|</code> Third Line → three lines</li>
+          </ul>
+        </div>
+      </aside>
     </div>
+
+    <footer class="footer">
+      <p>Hubba stage cards · 11×17 in</p>
+    </footer>
   </main>
-  <footer>
-    <!-- Footer content goes here -->
-  </footer>
 </body>
 </html>

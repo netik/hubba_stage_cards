@@ -5,10 +5,16 @@ Generate Hubba Hubba stage cards as PDFs from a list of names.
 Reads names from names.txt (or from a provided list), splits on connector
 words ("and", "&", etc.) for multi-line layout, and writes one PDF per name
 with text sized to fit 11x17 landscape pages.
+
+Markup in names:
+  |  forces a line break (e.g. "Anna Nymph | Essie Hex").
+  [phrase]  at the start (or after |) renders that phrase on a small
+  lead-in line (e.g. "[the princess] Luma Jaguar", "[the countess] Ruby").
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -69,6 +75,14 @@ CONNECTOR_FONT_MIN_PT = 24   # Minimum connector font size (pt)
 MAX_WORDS_PER_LINE = 3
 LEAD_IN_WORDS: frozenset[str] = frozenset({"the", "a", "an"})
 
+# Markup in names (in names.txt):
+# - "|" forces a line break, e.g. "Anna Nymph | Essie Hex".
+# - "[phrase]" at the start of a line (or after |) puts that phrase on a small
+#   lead-in line, e.g. "[the princess] Luma Jaguar" or "[the countess] Ruby".
+FORCED_BREAK_CHAR = "|"
+LEAD_IN_BRACKET_OPEN = "["
+LEAD_IN_BRACKET_CLOSE = "]"
+
 
 class Segment(TypedDict):
     """One segment of parsed name text: either a main block or a connector."""
@@ -123,6 +137,67 @@ def parse_into_segments(text: str) -> list[Segment]:
         segments.append({"type": "main", "text": " ".join(current)})
 
     return segments
+
+
+def preprocess_and_parse(text: str) -> list[Segment]:
+    """
+    Apply name markup then parse into segments.
+
+    - Split on FORCED_BREAK_CHAR ("|") so each part becomes its own line(s).
+    - In each part, an optional leading "[phrase]" is rendered as a small
+      lead-in line; the rest is parsed normally (connectors, main, chunking).
+
+    Examples:
+        "Anna Nymph | Essie Hex" -> [main "Anna Nymph", main "Essie Hex"]
+        "[the princess] Luma Jaguar" -> [connector "the princess", main "Luma Jaguar"]
+    """
+    part_strs = [p.strip() for p in text.split(FORCED_BREAK_CHAR) if p.strip()]
+    segments: list[Segment] = []
+    for part in part_strs:
+        if (
+            part.startswith(LEAD_IN_BRACKET_OPEN)
+            and LEAD_IN_BRACKET_CLOSE in part
+        ):
+            idx = part.index(LEAD_IN_BRACKET_CLOSE)
+            lead_in = part[len(LEAD_IN_BRACKET_OPEN) : idx].strip()
+            rest = part[idx + len(LEAD_IN_BRACKET_CLOSE) :].strip()
+            if lead_in:
+                segments.append({"type": "connector", "text": lead_in})
+            if rest:
+                segments.extend(parse_into_segments(rest))
+        else:
+            segments.extend(parse_into_segments(part))
+    return segments
+
+
+def display_name_from_raw(name: str) -> str:
+    """
+    Name for PDF title and filename: strip markup and normalize spaces.
+
+    Removes [ ], replaces | with space, collapses whitespace.
+    """
+    cleaned = name.strip()
+    cleaned = cleaned.replace(
+        LEAD_IN_BRACKET_OPEN, ""
+    ).replace(LEAD_IN_BRACKET_CLOSE, "")
+    cleaned = cleaned.replace(FORCED_BREAK_CHAR, " ")
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def unique_pdf_path(directory: Path, base_stem: str) -> Path:
+    """
+    Return a path under directory for a PDF named base_stem.pdf that does not
+    yet exist. If base_stem.pdf exists, use base_stem_1.pdf, then _2, etc.
+    """
+    candidate = directory / f"{base_stem}.pdf"
+    if not candidate.exists():
+        return candidate
+    n = 1
+    while True:
+        candidate = directory / f"{base_stem}_{n}.pdf"
+        if not candidate.exists():
+            return candidate
+        n += 1
 
 
 def expand_segments_to_lines(segments: list[Segment]) -> list[Segment]:
@@ -421,7 +496,7 @@ class StageCardPDF(FPDF):
             (lines, total_height_mm): list of (line_text, font_size_pt) and
             total height in mm.
         """
-        segments = expand_segments_to_lines(parse_into_segments(text))
+        segments = expand_segments_to_lines(preprocess_and_parse(text))
         available_width = max(
             10.0,
             self.w - self.l_margin - self.r_margin - WIDTH_SAFETY_MM,
@@ -713,11 +788,13 @@ def make_sign(
             "D",
         )
 
-    name = name_line.strip()
-    print(f"\n{name}\n")
+    raw_name = name_line.strip()
+    display = display_name_from_raw(raw_name)
+    print(f"\n{display}\n")
 
-    pdf.add_name(name)
-    out_file = output_path / f"{name.replace(' ', '_')}.pdf"
+    pdf.add_name(raw_name)  # layout interprets | and [phrase]
+    stem = display.replace(" ", "_")
+    out_file = unique_pdf_path(output_path, stem)
     pdf.output(str(out_file), "F")
     return out_file
 
